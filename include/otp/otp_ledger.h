@@ -1,4 +1,4 @@
-// otp_ledger.h — Overby Telemetry Protocol, reference implementation.
+// otp_ledger.h — Overby Ledger, reference implementation.
 //
 // A free, append-only, tamper-evident public record. No chain, no token, no
 // consensus, no fee. C++17, no external dependencies, no dependency on any

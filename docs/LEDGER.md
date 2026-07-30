@@ -1,22 +1,49 @@
-# Overby Telemetry Protocol
+# Overby Ledger
 
-*A free, append-only, tamper-evident public record.*
+*A free, append-only, tamper-evident record for OTF-1 and OTB-1 packets.*
 
 - **Version:** 1.0.0
 - **Language:** C++17, no external dependencies
-- **Licence:** CC0 1.0 Universal
+- **Licence:** Apache 2.0, matching OTF-1 and OTB-1
 - **Status:** Draft
 
-> **Note on the name.** Two expansions of **OTP** are in circulation: the Overby
-> Industries README refers to an Overby *Transparency* Protocol, and this
-> repository is `telemetry-protocol`. The acronym and the namespace (`otp::`)
-> are the same either way, so nothing in the code depends on which is settled.
-> Where the two differ, the Overby Industries README governs and this conforms
-> to it.
->
-> Telemetry is the more accurate description of the mechanism: measurement
-> transmitted off a running system so it can be monitored from outside it.
-> Transparency is what the telemetry is *for*.
+## 0. Where this sits
+
+Overby already has two schema standards. They answer the same question about
+different subject matter:
+
+| Standard | Repository | Defines |
+|---|---|---|
+| **OTF-1** Overby Telemetry Format | `telemetry-protocol` | What a *mission* packet says — mining, debris, reclamation, SMESSC, ODCI |
+| **OTB-1** Overby Transparency for Business | `transparency-protocol` | What a *spending* packet says — investments, vendors, procurement |
+
+Both define the shape of one packet. **Neither defines how a sequence of packets
+is made tamper-evident**, and both currently fill that hole with a blockchain
+token — `ProofOfCleanupToken` in OTF-1, `ProofOfInvestmentToken` in OTB-1.
+
+This library is that missing layer, and it does the token's job for free. It is
+schema-agnostic on purpose: `kind`, `citation`, and `detail` are free-form, so an
+OTF-1 debris capture and an OTB-1 land purchase append to the same ledger without
+the ledger knowing what either means.
+
+### Replacing the token
+
+Those two fields want one property: *proof this record exists and has not been
+altered.* An entry hash provides exactly that, at zero cost:
+
+```json
+"certifications": {
+  "SMESSC": true,
+  "ODCI_contribution": 5.0,
+  "ProofOfCleanupToken": "otp:1:8412:9f3c1a4e77b20d51"
+}
+```
+
+The field stays and the schema does not change. What changes is that the value is
+a ledger coordinate — protocol, sequence, entry hash — rather than a chain token,
+so issuing one costs nothing and verifying one needs no wallet, no node, and no
+gas. §2 covers what this does and does not buy against a chain, including the one
+property a chain genuinely provides, and how to get it for approximately nothing.
 
 ---
 
@@ -74,6 +101,55 @@ other:
 That last row is the one worth internalising. A careful operator rewriting
 history leaves a ledger that verifies perfectly. Only distribution catches it.
 
+### The one thing a chain buys that this does not — and how to get it free
+
+A hash chain proves an entry has not been altered *relative to the entries around
+it*. It does not prove **when** the entry was made. An operator could rewrite the
+whole ledger tonight and present it as though it had always read that way, and a
+reader seeing only that copy could not tell.
+
+Public chains are usually reached for at exactly this point, because a chain
+gives an ordering witnessed by parties with no reason to cooperate in a
+backdating. But that property is obtainable without paying per entry, by
+**anchoring**: publishing the ledger's `digest()` periodically somewhere the
+publisher does not control.
+
+An anchor costs one small write per period and covers **every entry since the
+last anchor**. That is the entire difference — cost becomes O(1) per period
+instead of O(1) per entry, which is precisely the cost that made a chain
+unattractive. Adequate anchors, roughly in ascending order of effort:
+
+- a signed tag in a public git repository, mirrored by anyone who clones it
+- an Archive.org snapshot of a digest page
+- a DNS TXT record
+- a line in any published periodical
+- one transaction on any public chain, if one is wanted — monthly, not per event
+
+Any of these establishes *this digest existed by this date*. A rewritten ledger
+then has to disagree with an anchor somebody else holds a copy of, which is the
+same detection distribution provides, extended backwards through time.
+
+### A note on the token fields in OTF-1 and OTB-1
+
+Both standards describe their Proof-of-Cleanup and Proof-of-Investment tokens as
+blockchain-verified. That framing is worth a second look, and not only on cost.
+
+The audience those standards target — agencies, regulators, insurers — has spent
+a decade watching tokenised environmental credits fail, and "blockchain-verified"
+now carries weight in the wrong direction with exactly those readers. The
+registries they actually recognise for carbon are operated registries with serial
+numbers and retirement records, not chains.
+
+More to the point, the whitepaper's own thesis is that Overby becomes the
+standards body — the ISO of space operations. **A standards body is a trusted
+registry.** If Overby is the registry, a chain pays consensus costs to avoid
+trusting itself. If Overby is not the registry, issuing a token does not make it
+one. Either way the chain is not doing the work the positioning needs.
+
+What does that work: an operated registry, a hash-chained ledger anyone can
+verify, distributed copies, and periodic anchoring. Free, auditable, and already
+the shape regulators accept.
+
 ## 3. The asymmetry, which is the whole design
 
 A record equally transparent about an institution and about a person who
@@ -102,10 +178,12 @@ The default falls protective: an unclassified subject is committed, because
 wrongly naming a person cannot be undone while wrongly protecting an institution
 only means somebody has to ask.
 
-## 4. Why this is its own repository
+## 4. Why this is separate from both schemas
 
 The obvious place for this was inside the corpus that publishes into it. It is
-not there on purpose.
+not there on purpose, and the same reasoning keeps it out of OTF-1 and OTB-1:
+one implementation serves all three, and a ledger owned by one publisher is
+verifiable only by whoever already trusts that publisher.
 
 A ledger maintained inside the body it audits is verifiable only by whoever
 already trusts that body. The Code of Universe Regulations disqualifies a party
@@ -204,8 +282,8 @@ The commitment scheme has the same caveat and one more: a party holding the key
 can test a guess at any identity. That is inherent to keyed commitments and is
 why the key is held under access control rather than published.
 
-Not yet built: streaming append to disk, multi-publisher federation, and a
-signature layer binding a ledger to a publisher's key.
+Not yet built: streaming append to disk, multi-publisher federation, a signature
+layer binding a ledger to a publisher key, and anchoring helpers (see 2).
 
 ---
 
