@@ -1,4 +1,4 @@
-# Overby Transparency Protocol
+# Overby Telemetry Protocol
 
 *A free, append-only, tamper-evident public record.*
 
@@ -7,11 +7,16 @@
 - **Licence:** CC0 1.0 Universal
 - **Status:** Draft
 
-> **Note.** The Overby Industries README refers to an Overby Transparency
-> Protocol. That text was not available when this reference implementation was
-> written, so this repository may use the name for something narrower or wider
-> than intended. Where the two differ, the README governs and this conforms to
-> it.
+> **Note on the name.** Two expansions of **OTP** are in circulation: the Overby
+> Industries README refers to an Overby *Transparency* Protocol, and this
+> repository is `telemetry-protocol`. The acronym and the namespace (`otp::`)
+> are the same either way, so nothing in the code depends on which is settled.
+> Where the two differ, the Overby Industries README governs and this conforms
+> to it.
+>
+> Telemetry is the more accurate description of the mechanism: measurement
+> transmitted off a running system so it can be monitored from outside it.
+> Transparency is what the telemetry is *for*.
 
 ---
 

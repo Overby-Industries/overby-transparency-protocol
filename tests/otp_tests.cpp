@@ -1,4 +1,4 @@
-// otp_tests.cpp — Overby Transparency Protocol test suite.
+// otp_tests.cpp — Overby Telemetry Protocol test suite.
 //
 // No external framework, for the same reason libcur has none: a transparency
 // ledger whose tests need a package manager is a ledger that does not get
@@ -267,7 +267,7 @@ static void test_the_ledger_imposes_nothing() {
 }
 
 int main() {
-    std::printf("Overby Transparency Protocol %s\n\n", otp::OTP_VERSION);
+    std::printf("Overby Telemetry Protocol %s\n\n", otp::OTP_VERSION);
 
     test_people_are_never_named();
     test_commitments_do_not_link_a_person_across_entries();
