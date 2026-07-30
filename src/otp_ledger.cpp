@@ -27,9 +27,14 @@ void mix_str(uint64_t& h, const std::string& s) {
     h *= FNV_PRIME;
 }
 
-// Field separator for the canonical form. Chosen because it cannot appear in
-// the text fields after escaping, so parsing is unambiguous.
-constexpr char SEP = '\x1f';
+// Field separator for the canonical form.
+//
+// Tab, not an unprintable control character. CUR-X.5 §5.8 makes holding a copy a
+// right, and copies are mirrored to public git — so a format whose diffs are
+// unreadable throws away the main benefit of mirroring. Escaping keeps parsing
+// unambiguous, and `git diff` shows an append as added lines and a rewrite as a
+// modified line, with no tooling at all.
+constexpr char SEP = '\t';
 
 std::string escape(const std::string& s) {
     std::string out;
@@ -37,7 +42,8 @@ std::string escape(const std::string& s) {
     for (char c : s) {
         if (c == '\\') { out += "\\\\"; }
         else if (c == '\n') { out += "\\n"; }
-        else if (c == SEP) { out += "\\u"; }
+        else if (c == '\r') { out += "\\r"; }
+        else if (c == SEP) { out += "\\t"; }
         else { out += c; }
     }
     return out;
@@ -51,7 +57,8 @@ std::string unescape(const std::string& s) {
         ++i;
         if (s[i] == '\\') out += '\\';
         else if (s[i] == 'n') out += '\n';
-        else if (s[i] == 'u') out += SEP;
+        else if (s[i] == 'r') out += '\r';
+        else if (s[i] == 't') out += SEP;
         else out += s[i];
     }
     return out;
@@ -124,9 +131,20 @@ uint64_t Ledger::commitment_for(const std::string& subject_id,
     return h;
 }
 
+void Ledger::set_instance(const std::string& instance,
+                         const std::string& schema_version) {
+    instance_ = instance;
+    schema_version_ = schema_version;
+}
+
 uint64_t Ledger::hash_entry(const Entry& e) const {
     uint64_t h = FNV_OFFSET;
     mix_u64(h, e.prev_hash);
+    // Hashed first and deliberately. An entry cannot be relabelled into another
+    // instance, and a simulated determination cannot be re-presented as a real
+    // one by moving the file it lives in.
+    mix_str(h, e.instance);
+    mix_str(h, e.schema_version);
     mix_u64(h, e.seq);
     mix_u64(h, e.tick);
     mix_str(h, e.kind);
@@ -142,6 +160,8 @@ uint64_t Ledger::hash_entry(const Entry& e) const {
 }
 
 const Entry& Ledger::append(Entry e) {
+    e.instance = instance_;
+    e.schema_version = schema_version_;
     e.seq = entries_.empty() ? 1 : entries_.back().seq + 1;
     e.prev_hash = entries_.empty() ? 0 : entries_.back().entry_hash;
 
@@ -312,9 +332,11 @@ const Entry* Ledger::get(uint64_t seq) const {
 
 std::string Ledger::to_canonical() const {
     std::ostringstream os;
-    os << "OTP\t" << OTP_VERSION << "\n";
+    os << "OTP" << SEP << OTP_VERSION << SEP << escape(instance_) << SEP
+       << escape(schema_version_) << "\n";
     for (const Entry& e : entries_) {
-        os << e.seq << SEP << e.tick << SEP << escape(e.kind) << SEP
+        os << escape(e.instance) << SEP << escape(e.schema_version) << SEP
+           << e.seq << SEP << e.tick << SEP << escape(e.kind) << SEP
            << escape(e.citation) << SEP << escape(e.detail) << SEP
            << static_cast<unsigned>(e.severity) << SEP
            << static_cast<unsigned>(e.disclosure) << SEP
@@ -333,6 +355,22 @@ bool Ledger::from_canonical(const std::string& text, Ledger* out) {
     std::string line;
     if (!std::getline(is, line)) return false;
     if (line.rfind("OTP\t", 0) != 0) return false;
+    {
+        // Header: OTP <ver> <instance> <schema>. The instance travels on every
+        // entry as well, so a header rewrite alone cannot relabel the ledger —
+        // the per-entry values are hashed and the entries would stop verifying.
+        std::vector<std::string> hf;
+        std::string hc;
+        for (char ch : line) {
+            if (ch == SEP) { hf.push_back(hc); hc.clear(); }
+            else { hc += ch; }
+        }
+        hf.push_back(hc);
+        if (hf.size() >= 4) {
+            out->instance_ = unescape(hf[2]);
+            out->schema_version_ = unescape(hf[3]);
+        }
+    }
 
     while (std::getline(is, line)) {
         if (line.empty()) continue;
@@ -344,23 +382,25 @@ bool Ledger::from_canonical(const std::string& text, Ledger* out) {
             else { cur += c; }
         }
         f.push_back(cur);
-        if (f.size() != 13) return false;
+        if (f.size() != 15) return false;
 
         Entry e;
         try {
-            e.seq = std::stoull(f[0]);
-            e.tick = std::stoull(f[1]);
-            e.kind = unescape(f[2]);
-            e.citation = unescape(f[3]);
-            e.detail = unescape(f[4]);
-            e.severity = static_cast<uint8_t>(std::stoul(f[5]));
-            e.disclosure = static_cast<Disclosure>(std::stoul(f[6]));
-            e.subject_id = unescape(f[7]);
-            e.subject_commitment = std::stoull(f[8]);
-            e.standing = static_cast<Standing>(std::stoul(f[9]));
-            e.corrects_seq = std::stoull(f[10]);
-            e.prev_hash = std::stoull(f[11]);
-            e.entry_hash = std::stoull(f[12]);
+            e.instance = unescape(f[0]);
+            e.schema_version = unescape(f[1]);
+            e.seq = std::stoull(f[2]);
+            e.tick = std::stoull(f[3]);
+            e.kind = unescape(f[4]);
+            e.citation = unescape(f[5]);
+            e.detail = unescape(f[6]);
+            e.severity = static_cast<uint8_t>(std::stoul(f[7]));
+            e.disclosure = static_cast<Disclosure>(std::stoul(f[8]));
+            e.subject_id = unescape(f[9]);
+            e.subject_commitment = std::stoull(f[10]);
+            e.standing = static_cast<Standing>(std::stoul(f[11]));
+            e.corrects_seq = std::stoull(f[12]);
+            e.prev_hash = std::stoull(f[13]);
+            e.entry_hash = std::stoull(f[14]);
         } catch (...) {
             return false;
         }
@@ -377,6 +417,8 @@ bool Ledger::from_canonical(const std::string& text, Ledger* out) {
 std::string Ledger::to_json(size_t max_entries) const {
     std::ostringstream os;
     os << "{\"protocol\":\"OTP\",\"version\":\"" << OTP_VERSION << "\""
+       << ",\"instance\":\"" << json_escape(instance_) << "\""
+       << ",\"schema\":\"" << json_escape(schema_version_) << "\""
        << ",\"count\":" << entries_.size() << ",\"digest\":\"" << digest()
        << "\",\"entries\":[";
 

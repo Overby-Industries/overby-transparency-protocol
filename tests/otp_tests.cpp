@@ -169,7 +169,7 @@ static void test_tampering_is_localised() {
 
     // Now edit an entry in the copy, as a publisher rewriting history would.
     std::string text = l.to_canonical();
-    const size_t at = text.find("\x1f" "cite\x1f" "d");
+    const size_t at = text.find("\tcite\td");
     CHECK(at != std::string::npos);
     text.replace(at + 1, 4, "XXXX");
 
@@ -266,6 +266,90 @@ static void test_the_ledger_imposes_nothing() {
     CHECK(otp::is_finding(otp::ST_REMEDIED));
 }
 
+static void test_an_instance_cannot_be_relabelled() {
+    TEST("a simulated determination cannot be re-presented as a real one "
+         "(CUR-X.5 §5.6(e), design record §2)");
+
+    otp::Ledger sim = make_ledger();
+    sim.set_instance("aevoria", "CUR-X.5/1.0.0");
+    sim.publish(otp::SUBJ_INSTITUTION, "tribunal-2", "determination",
+                otp::ST_DETERMINED, 10, 4, "CUR-H.7 §7.15", "measure imposed");
+
+    // The instance is on the entry, not merely in the header, and it is hashed.
+    CHECK(sim.get(1)->instance == "aevoria");
+    CHECK(sim.get(1)->schema_version == "CUR-X.5/1.0.0");
+
+    // Rewriting the header to claim a different instance does not work: the
+    // per-entry values are hashed, so the entries stop verifying. Renaming the
+    // file, moving the directory, or editing the first line all fail the same
+    // way — which is the point, since those are the cheap attacks.
+    std::string text = sim.to_canonical();
+    const size_t nl = text.find('\n');
+    std::string header = text.substr(0, nl);
+    CHECK(header.find("aevoria") != std::string::npos);
+
+    // Swap only the body's instance field on the first entry.
+    const size_t body = nl + 1;
+    CHECK(text.compare(body, 7, "aevoria") == 0);
+    text.replace(body, 7, "overbyO");
+
+    otp::Ledger forged;
+    CHECK(otp::Ledger::from_canonical(text, &forged));
+    const otp::Integrity r = forged.verify();
+    CHECK(!r.intact);
+    CHECK_EQ(r.first_bad_seq, uint64_t{1});
+
+    // Two ledgers with identical content but different instances are not the
+    // same ledger, so an aggregator cannot merge them by accident.
+    otp::Ledger real = make_ledger();
+    real.set_instance("overby-ops", "CUR-X.5/1.0.0");
+    real.publish(otp::SUBJ_INSTITUTION, "tribunal-2", "determination",
+                 otp::ST_DETERMINED, 10, 4, "CUR-H.7 §7.15", "measure imposed");
+    CHECK(sim.digest() != real.digest());
+    CHECK(!sim.compare(real).identical);
+}
+
+static void test_canonical_form_is_git_readable() {
+    TEST("the canonical form diffs cleanly, because copies are mirrored to git "
+         "(CUR-X.5 §5.8)");
+
+    otp::Ledger l = make_ledger();
+    l.set_instance("aevoria", "CUR-X.5/1.0.0");
+    l.publish(otp::SUBJ_INSTITUTION, "operator-1", "review_lapsed",
+              otp::ST_ALLEGED, 40, 4, "CUR-H.7 §7.12(c)(3)", "review overdue");
+
+    const std::string one = l.to_canonical();
+
+    // No unprintable control characters. A diff a person cannot read wastes the
+    // reason for mirroring to git in the first place.
+    for (char c : one) {
+        CHECK(c == '\n' || c == '\t' ||
+              static_cast<unsigned char>(c) >= 0x20);
+    }
+
+    // Appending is purely additive: the earlier text is a prefix of the later,
+    // so every commit adds lines and modifies none. A rewrite therefore shows
+    // as a modified line in `git diff` with no tooling at all.
+    l.publish(otp::SUBJ_INSTITUTION, "operator-1", "review_lapsed",
+              otp::ST_ALLEGED, 140, 4, "CUR-H.7 §7.12(c)(3)", "still overdue");
+    const std::string two = l.to_canonical();
+    CHECK(two.rfind(one, 0) == 0);
+    CHECK(two.size() > one.size());
+
+    // Tabs separate fields and survive the round trip; a tab inside a field is
+    // escaped rather than breaking the parse.
+    otp::Ledger tricky = make_ledger();
+    tricky.set_instance("aevoria", "CUR-X.5/1.0.0");
+    tricky.publish(otp::SUBJ_INSTITUTION, "op\t2", "kind\nwith\nnewlines",
+                   otp::ST_ALLEGED, 1, 1, "cite", "detail\twith\ttabs");
+    otp::Ledger back;
+    CHECK(otp::Ledger::from_canonical(tricky.to_canonical(), &back));
+    CHECK(back.verify().intact);
+    CHECK_EQ(back.get(1)->subject_id, std::string("op\t2"));
+    CHECK_EQ(back.get(1)->detail, std::string("detail\twith\ttabs"));
+    CHECK_EQ(back.digest(), tricky.digest());
+}
+
 int main() {
     std::printf("Overby Ledger %s\n\n", otp::OTP_VERSION);
 
@@ -275,6 +359,8 @@ int main() {
     test_tampering_is_localised();
     test_selective_publication_leaves_a_hole();
     test_the_ledger_imposes_nothing();
+    test_an_instance_cannot_be_relabelled();
+    test_canonical_form_is_git_readable();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

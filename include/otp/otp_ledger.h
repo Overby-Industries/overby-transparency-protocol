@@ -127,6 +127,22 @@ constexpr bool is_finding(Standing s) {
 }
 
 struct Entry {
+    // Which ledger this entry belongs to — CUR-X.5 §5.6(e) and the design
+    // record §2. It is hashed, so it cannot be changed by renaming a file or
+    // moving a directory.
+    //
+    // One protocol serves instances with entirely different subject matter: a
+    // simulated Commonwealth's governance, and a real company's spending. A
+    // reader must never be able to mistake one for the other, and the identifier
+    // travels inside the entry precisely so that stripping the surrounding
+    // context cannot make an Aevoria determination read as a real-world one.
+    std::string instance;
+
+    // The version of CUR-X.5 §5.2 this entry was published under. §5.6(e): no
+    // entry is reinterpreted under a later version, so a subsequent narrowing of
+    // the publishable set cannot reach entries already published.
+    std::string schema_version;
+
     // Monotonic and gap-free by construction, so a removed entry shows as a
     // hole before any hash is checked.
     uint64_t seq = 0;
@@ -184,6 +200,11 @@ public:
     // testing a guess at someone's identity.
     void set_commitment_key(uint64_t k) { commitment_key_ = k; }
 
+    // Identify this ledger. Every entry published afterwards carries both, and
+    // both are hashed. CUR-X.5 §5.6(e).
+    void set_instance(const std::string& instance, const std::string& schema_version);
+    const std::string& instance() const { return instance_; }
+
     // Append an entry. Disclosure is decided from `kind` and cannot be
     // overridden: there is no parameter by which a caller elects to name a
     // person, and its absence is the protection.
@@ -231,7 +252,13 @@ public:
 
     // Canonical serialisation. Deterministic, used both for hashing and for
     // re-import, so a holder can load someone else's copy and compare it
-    // byte-identically. One entry per line.
+    // byte-identically. One entry per line, tab-separated.
+    //
+    // Tab rather than an unprintable separator, because CUR-X.5 §5.8 makes
+    // holding a copy a right and the copies are mirrored to public git. A
+    // format producing diffs no human can read wastes the main advantage of
+    // mirroring at all: an append shows as added lines, and a rewrite shows as
+    // a modified line, visible in `git diff` with no tooling whatever.
     std::string to_canonical() const;
     static bool from_canonical(const std::string& text, Ledger* out);
 
@@ -244,6 +271,8 @@ private:
 
     std::vector<Entry> entries_;
     uint64_t commitment_key_ = 0;
+    std::string instance_;
+    std::string schema_version_;
 };
 
 }  // namespace otp

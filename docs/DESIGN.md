@@ -173,17 +173,50 @@ honest to state and not to overstate.
 
 ## 6. Open questions
 
-### 6.1 Append-only versus erasure — the real instance
+### 6.1 Append-only versus erasure — RESOLVED
 
-An append-only ledger and a statutory right to erasure are in direct conflict,
-and the real-operations instance is subject to the second.
+**Decision: personal data never enters the ledger. The ledger holds commitments;
+identities live in a separate erasable store. Erasure destroys the store entry
+and leaves the commitment permanently unresolvable.**
 
-The likely resolution is that erasable personal data never enters the ledger.
-Commitments already handle people. But OTB-1 records vendors, and a sole trader
-is both a vendor and a person — so the boundary is not clean. **This needs a
-decision before the operations instance publishes anything**, because entries
-cannot be withdrawn afterwards. Publishing first and resolving later is not
-available.
+The conflict is real — an append-only record cannot delete, and the operations
+instance is subject to erasure rights. It dissolves once the ledger stops holding
+the thing that would have to be deleted.
+
+A commitment whose store entry has been destroyed, and whose key is gone, is not
+personal data. It is an opaque number that nobody — including the publisher — can
+link to a person. So the chain stays intact and unbroken, and the person is no
+longer identifiable. Both obligations are satisfied without either being weakened.
+
+Three consequences:
+
+**The store is deliberately outside the chain.** It is ordinary mutable storage,
+because it has to be. Erasure is a delete, and a delete is what append-only
+forbids — so the erasable material is kept where deletion is legal and the
+immutable material holds nothing that can be demanded back.
+
+**Erasure is itself published.** Destroying a store entry is conduct, and an
+entry recording *that a subject exercised erasure* is appended to the chain. It
+names nobody. Without it, erasure would be indistinguishable from a record that
+never existed, which is a hole a publisher could hide in.
+
+**The sole-trader boundary.** The line is not "vendor versus person" but **legal
+entity versus natural person**. A registered company is NAMED. A sole trader
+trading under their own name is a natural person and is COMMITTED — same rule as
+everywhere else, applied to the case that made it look unclear.
+
+This does not gut OTB-1's purpose, because the purpose is showing where money
+went. The transaction stays fully public — amount, category, date, purpose,
+funding source. Only the counterparty's identity is committed, and only where the
+counterparty is a natural person. "Consultancy, $40,000, Category Y, Q3" is the
+transparency OTB-1 promises; the consultant's name is not what a reader needs to
+audit spending.
+
+> **Not legal advice.** Financial records carry statutory retention that in many
+> jurisdictions overrides erasure, which may make this moot for most OTB-1
+> entries. The design is built to satisfy the stricter reading so it does not
+> depend on which way that falls. It needs review by someone qualified before the
+> operations instance publishes.
 
 ### 6.2 What an instance identifier looks like
 
@@ -207,15 +240,45 @@ Per event, per tick, or per period. Interacts with mirroring: a commit per event
 is unreadable, a commit per month leaves a long window in which a rewrite is
 undetectable.
 
-### 6.6 Schema governance — the one an auditor will probe
+### 6.6 Schema governance — RESOLVED
 
-**Whoever can change the schema can decide what stops being visible.** If Overby
-can unilaterally revise OTF-1, OTB-1, or the publishable set, then the guarantee
-reduces to *"we publish what we currently choose to publish"* — which is what
-every corporate transparency report already promises and no regulator credits.
+**Decision: narrowing is harder than widening, schema changes are themselves
+published, and every entry records the schema version it was published under.**
 
-This is a governance question, not a technical one. It is cheap to answer now and
-expensive to answer after the first external party relies on the record.
+Whoever can change the schema can decide what stops being visible. Four rules,
+three of which are enforceable in code:
+
+**1. The ratchet.** Adding an event type to the publishable set is an ordinary
+amendment. Removing one is an entrenched amendment at the highest threshold
+FOUNDATION-002 §10 establishes. Transparency therefore only widens easily, and
+narrowing costs what it should. Same asymmetry as `registered_subject_class`,
+where the classification moves toward protection freely and away from it not at
+all.
+
+**2. A schema change is an entry.** It goes in the chain, in sequence, under the
+old schema. A publisher who narrows what they publish cannot do it quietly, and
+the narrowing is as durable as everything else in the record.
+
+**3. Entries carry their schema version** and are never retroactively
+reinterpreted. A reader knows which rules were in force when each entry was made,
+so a later narrowing cannot be applied backwards to make old entries mean less.
+
+**4. Narrowing requires external agreement** — an auditor, insurer, or agency
+whose concurrence is recorded. This one is a commitment rather than a mechanism,
+and it is the only one of the four that code cannot enforce.
+
+### The limit, stated plainly
+
+**Nothing here stops an operator abandoning the protocol entirely.** A publisher
+who simply stops publishing, or forks to a private format, is beyond the reach of
+any rule the protocol contains. That is not a gap to be closed — it is where
+technical measures end.
+
+What the design does instead is make abandonment *loud*. Mirrors stop advancing.
+The aggregator's heartbeat check reports the publisher silent. The last entry
+under the old schema stays in every clone anybody took. A publisher can leave;
+they cannot leave quietly, and cannot make it look as though they never
+published. That is the honest boundary of what this can promise.
 
 ---
 
