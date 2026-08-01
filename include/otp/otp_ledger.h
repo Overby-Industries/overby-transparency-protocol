@@ -178,6 +178,17 @@ struct Integrity {
     std::string reason;
 };
 
+// A note on where instance identity actually lives. The canonical header line
+// (see to_canonical()) carries `instance`/`schema_version` for a human or a
+// caller to read without walking every entry — but the header itself is not
+// part of any hash. What IS hashed is the copy of each field stamped onto every
+// Entry at the moment it was appended. verify() checks the header against the
+// entries, not the other way round, because the entries are what a rewrite
+// cannot touch without being caught; the header is just a label pointing at
+// them. A copy whose header was edited without touching the entries fails
+// verify() with "does not match its own entries" rather than silently
+// reporting the wrong instance through instance().
+
 struct Divergence {
     bool identical = true;
     uint64_t first_differing_seq = 0;
@@ -202,8 +213,17 @@ public:
 
     // Identify this ledger. Every entry published afterwards carries both, and
     // both are hashed. CUR-X.5 §5.6(e).
-    void set_instance(const std::string& instance, const std::string& schema_version);
+    //
+    // Returns false and changes nothing once the ledger holds an entry. Instance
+    // is what keeps a simulated determination from being read as a real one, and
+    // an identity a ledger can switch mid-history is not an identity — a
+    // publisher could open as "aevoria", accumulate entries, then relabel to
+    // "overby-ops" and have every later determination read as real-world
+    // conduct while the hash chain stays unbroken throughout.
+    bool set_instance(const std::string& instance,
+                      const std::string& schema_version);
     const std::string& instance() const { return instance_; }
+    const std::string& schema_version() const { return schema_version_; }
 
     // Append an entry. Disclosure is decided from `kind` and cannot be
     // overridden: there is no parameter by which a caller elects to name a

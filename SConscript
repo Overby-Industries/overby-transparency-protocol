@@ -10,6 +10,7 @@ Import("env")
 
 otp_sources = [
     File("src/otp_ledger.cpp"),
+    File("src/otp_registry.cpp"),
 ]
 
 # MSVC reads source as the local codepage unless told otherwise, and the

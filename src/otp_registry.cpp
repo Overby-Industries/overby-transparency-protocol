@@ -42,12 +42,28 @@ const char* to_string(IngestStatus s) {
         case ING_ACCEPTED: return "accepted";
         case ING_UNCHANGED: return "unchanged";
         case ING_MALFORMED: return "malformed";
+        case ING_WRONG_INSTANCE: return "wrong_instance";
         case ING_BROKEN_CHAIN: return "broken_chain";
         case ING_HISTORY_REWRITTEN: return "history_rewritten";
         case ING_TRUNCATED: return "truncated";
         case ING_STATUS_COUNT: break;
     }
     return "unknown";
+}
+
+bool Registry::set_instance(const std::string& instance,
+                            const std::string& schema_version) {
+    // track() alone registers intent to watch a publisher and holds no data, so
+    // it does not block this. What blocks it is any actual ingest — a source
+    // ledger holding entries, or the registry's own ledger already having
+    // recorded an observation.
+    if (own_ledger_.size() > 0) return false;
+    for (const Source& s : sources_) {
+        if (s.ledger.size() > 0) return false;
+    }
+    instance_ = instance;
+    schema_version_ = schema_version;
+    return own_ledger_.set_instance(instance, schema_version);
 }
 
 void Registry::track(const std::string& publisher_id, uint64_t heartbeat_ticks) {
@@ -72,6 +88,17 @@ const Source* Registry::source(const std::string& publisher_id) const {
     return nullptr;
 }
 
+void Registry::publish_own(SubjectKind kind, const std::string& subject_id,
+                           const std::string& event_kind, uint64_t tick,
+                           const std::string& detail) {
+    // Institutions only, always. Every subject own_ledger_ ever names is a
+    // publisher — which by design record §3 is an institution or enterprise,
+    // never a being on Commonwealth account — so this never touches the
+    // commitment machinery §5.5 reserves for people.
+    own_ledger_.publish(kind, subject_id, event_kind, ST_DETERMINED, tick, 2,
+                        "OTP registry observation", detail);
+}
+
 IngestReport Registry::ingest(const std::string& publisher_id,
                               const std::string& canonical_text,
                               uint64_t now_tick) {
@@ -90,14 +117,27 @@ IngestReport Registry::ingest(const std::string& publisher_id,
         return rep;
     }
 
-    // Verify before storing. A registry that keeps whatever it is handed
-    // launders it, and a broken chain arriving from a publisher is a finding
-    // about that publisher rather than a copy worth holding.
+    // Verify before storing, and verify before even checking whose instance it
+    // claims — a ledger has to be internally consistent before its instance()
+    // can be trusted at all, per the note in otp_ledger.h above Integrity: the
+    // header is not itself hashed, and verify() is what ties it to the entries
+    // that are.
     const Integrity integ = incoming.verify();
     if (!integ.intact) {
         rep.status = ING_BROKEN_CHAIN;
         rep.conflict_seq = integ.first_bad_seq;
         rep.reason = integ.reason;
+        src->last_ingest_tick = now_tick;
+        return rep;
+    }
+
+    // Design record §2: a reader must never mistake one instance for another.
+    // This registry aggregates exactly one; anything else is refused outright,
+    // before it can pollute any cross-publisher report.
+    if (!instance_.empty() && incoming.instance() != instance_) {
+        rep.status = ING_WRONG_INSTANCE;
+        rep.reason = "ledger belongs to instance \"" + incoming.instance() +
+                     "\"; this registry aggregates \"" + instance_ + "\"";
         src->last_ingest_tick = now_tick;
         return rep;
     }
@@ -112,6 +152,8 @@ IngestReport Registry::ingest(const std::string& publisher_id,
         ++src->rewrite_attempts;
         src->last_rewrite_tick = now_tick;
         src->last_ingest_tick = now_tick;
+        publish_own(SUBJ_INSTITUTION, publisher_id, "rewrite_attempt_detected",
+                   now_tick, "submitted ledger shorter than the held copy");
         return rep;
     }
 
@@ -132,11 +174,20 @@ IngestReport Registry::ingest(const std::string& publisher_id,
             ++src->rewrite_attempts;
             src->last_rewrite_tick = now_tick;
             src->last_ingest_tick = now_tick;
+            publish_own(SUBJ_INSTITUTION, publisher_id,
+                       "rewrite_attempt_detected", now_tick,
+                       "entries disagreed with a previously held copy from "
+                       "seq " + std::to_string(held[i].seq));
             return rep;
         }
     }
 
     src->last_ingest_tick = now_tick;
+
+    // Heard from again: whatever silence was in progress is over. Reset the
+    // edge so a future lapse is reported fresh rather than staying suppressed
+    // by a flag left over from last time.
+    src->silence_reported = false;
 
     if (incoming.size() == src->ledger.size()) {
         rep.status = ING_UNCHANGED;
@@ -148,6 +199,30 @@ IngestReport Registry::ingest(const std::string& publisher_id,
     rep.status = ING_ACCEPTED;
     rep.entries_after = src->ledger.size();
     return rep;
+}
+
+std::vector<std::string> Registry::run_builtin_test(uint64_t now_tick) {
+    std::vector<std::string> newly_silent;
+    for (Source& s : sources_) {
+        if (s.heartbeat_ticks == 0) continue;
+        const bool silent_now = now_tick >= s.last_ingest_tick + s.heartbeat_ticks;
+
+        if (silent_now && !s.silence_reported) {
+            s.silence_reported = true;
+            newly_silent.push_back(s.publisher_id);
+            publish_own(SUBJ_INSTITUTION, s.publisher_id, "publisher_silent",
+                       now_tick,
+                       "no ingest since tick " +
+                           std::to_string(s.last_ingest_tick) +
+                           "; heartbeat " +
+                           std::to_string(s.heartbeat_ticks));
+        }
+        // Recovery (silent_now false while silence_reported true) is cleared in
+        // ingest(), at the moment a fresh submission actually arrives — not
+        // here, because run_builtin_test() runs on the clock and has nothing
+        // new to base a recovery on.
+    }
+    return newly_silent;
 }
 
 std::vector<std::string> Registry::silent_publishers(uint64_t now_tick) const {
@@ -174,6 +249,16 @@ std::vector<Registry::Hit> Registry::find_naming(
     std::vector<Hit> out;
     for (const Source& s : sources_) {
         for (uint64_t seq : s.ledger.entries_naming(subject_id)) {
+            // A correction naming the same subject is not a second occurrence
+            // of it — it is the resolution of the first, and latest_standing()
+            // already folds it into that entry's reported standing below. Same
+            // exclusion standing_counts() applies, for the same reason: without
+            // it, an institution that was corrected would appear to have two
+            // matters against it, one of which is really the record of the
+            // other having been cleared.
+            const Entry* e = s.ledger.get(seq);
+            if (e != nullptr && e->corrects_seq != 0) continue;
+
             Hit h;
             h.publisher_id = s.publisher_id;
             h.seq = seq;
@@ -215,13 +300,19 @@ uint64_t Registry::digest() const {
         mix_str(h, s->publisher_id);
         mix_u64(h, s->ledger.digest());
     }
+    // The registry's own observations are part of what it holds; two
+    // registries whose sources agree but whose own histories differ (one
+    // caught a rewrite attempt, one has not run its built-in test yet) are
+    // not in the same state, and the digest should say so.
+    mix_u64(h, own_ledger_.digest());
     return h;
 }
 
 std::string Registry::to_json() const {
     std::ostringstream os;
-    os << "{\"protocol\":\"OTP\",\"view\":\"registry\",\"digest\":\"" << digest()
-       << "\",\"sources\":[";
+    os << "{\"protocol\":\"OTP\",\"view\":\"registry\",\"instance\":\""
+       << json_escape(instance_) << "\",\"digest\":\"" << digest()
+       << "\",\"ownLedgerEntries\":" << own_ledger_.size() << ",\"sources\":[";
     bool first = true;
     for (const Source& s : sources_) {
         if (!first) os << ",";
@@ -230,7 +321,8 @@ std::string Registry::to_json() const {
            << "\",\"entries\":" << s.ledger.size() << ",\"digest\":\""
            << s.ledger.digest() << "\",\"lastIngestTick\":"
            << s.last_ingest_tick << ",\"rewriteAttempts\":"
-           << s.rewrite_attempts << "}";
+           << s.rewrite_attempts << ",\"silenceReported\":"
+           << (s.silence_reported ? "true" : "false") << "}";
     }
     os << "]}";
     return os.str();

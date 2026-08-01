@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(otp STATIC
     src/otp_ledger.cpp
+    src/otp_registry.cpp
 )
 
 add_library(otp::otp ALIAS otp)

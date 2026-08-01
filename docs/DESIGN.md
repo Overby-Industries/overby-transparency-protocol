@@ -282,13 +282,36 @@ published. That is the honest boundary of what this can promise.
 
 ---
 
-## 7. What changes in the existing sketch
+## 7. What changed in the sketch, and status
 
-Recorded so the sketch is not mistaken for agreed design:
+Recorded so history is legible rather than left to be reverse-engineered from
+diffs.
 
-- **Add** an instance identifier to `Entry`, inside the hash — §2
-- **Change** the canonical separator from `\x1f` to tab-with-escaping — §5
-- **Keep** `otp_registry.h/.cpp` as the aggregator, unchanged in shape — §3
-- **Drop** the standalone anchoring component; git mirroring subsumes it — §5
-- **Add** obligation lapses to the publishable set — §4
-- **Move** the publishable set out of code and into a CUR title — §4
+**Applied, all in `otp_ledger.h`/`.cpp`:**
+
+- Instance identifier added to `Entry`, inside the hash — §2
+- Canonical separator changed from `\x1f` to tab-with-escaping — §5
+- Obligation lapses added to the publishable set — §4 (specified in CUR-X.5
+  §5.3, not in this repository, which stays schema-agnostic)
+- The publishable set moved out of code and into a CUR title — §4, CUR-X.5 §5.2
+- Standalone anchoring component dropped; git mirroring subsumes it — §5
+
+**Two gaps found only while building the aggregator, closed before it shipped:**
+
+- `Ledger::set_instance()` was callable after entries existed, silently
+  relabelling every later entry. It now refuses once the ledger is non-empty.
+- `verify()` checked entries against each other but never against the ledger's
+  own header — so a copy whose header alone had been edited would report the
+  wrong `instance()` while still verifying. `verify()` now checks every entry
+  against the header, closing that.
+
+**`otp_registry.h`/`.cpp` — no longer a sketch, built and tested (§6.1 of
+`LEDGER.md`):**
+
+- Bound to one instance, refusing any other, matching §2's "impossible to
+  confuse" requirement rather than trusting callers to keep instances separate
+- Keeps its own append-only ledger of what it observed — a silent publisher, a
+  rewrite attempt — because a watchdog that only watches is unaccountable
+- `run_builtin_test()`, named to match `CURStateMachine`'s method of the same
+  shape: a check that runs because the clock advanced, which is the only way
+  to notice that nothing arrived

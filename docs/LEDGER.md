@@ -218,7 +218,8 @@ things it publishes.
 #include <otp/otp_ledger.h>
 
 otp::Ledger ledger;
-ledger.set_commitment_key(key);   // held separately from the ledger
+ledger.set_commitment_key(key);          // held separately from the ledger
+ledger.set_instance("aevoria", "CUR-X.5/1.0.0");  // locked once entries exist
 
 // An institution. Named, and linkable across every entry concerning it.
 ledger.publish(otp::SUBJ_INSTITUTION, "habitat-operator-4",
@@ -243,6 +244,62 @@ otp::Ledger::from_canonical(text, &mine);
 mine.verify().intact;              // internally consistent?
 theirs.compare(mine).identical;    // do we agree on the same chain?
 ```
+
+## 6.1 The aggregator
+
+`otp::Registry` collects from many publishers and answers the query no single
+ledger can: *has anyone said anything about this institution?* It is why
+publishing pushes and reporting pulls — see the long comment atop
+`otp_registry.h` for the three reasons a pull-everything registry cannot work,
+and why a registry that only verifies is in the stronger position, not the
+weaker one.
+
+```cpp
+#include <otp/otp_registry.h>
+
+otp::Registry reg;
+reg.set_instance("aevoria", "CUR-X.5/1.0.0");   // one registry, one instance
+reg.track("tribunal-2", /*heartbeat_ticks=*/2000);
+
+// A publisher submits its canonical text. Verified, checked against what is
+// already held, and stored only if it strictly extends it.
+otp::IngestReport rep = reg.ingest("tribunal-2", canonical_text, now_tick);
+rep.ok();               // accepted, or unchanged — never a silent overwrite
+
+// The clock, not an arrival, is what notices silence.
+reg.run_builtin_test(now_tick);       // publishes into the registry's own record
+reg.silent_publishers(now_tick);      // pure query, no side effect
+
+// Cross-publisher: what has been said about this institution, anywhere,
+// resolved through every correction rather than shown as first published.
+for (const auto& hit : reg.find_naming("habitat-operator-4")) { /* ... */ }
+
+// The registry is a publisher too. Its findings — a rewrite attempt, a
+// publisher gone quiet — are on the record, mirrorable exactly like anyone
+// else's.
+reg.own_ledger().to_canonical();
+```
+
+Three properties worth internalising, because they are the design record's
+decisions made concrete rather than incidental implementation choices:
+
+- **One registry, one instance.** `set_instance()` locks after the first
+  ingest, the same way `Ledger::set_instance()` does, and `ingest()` refuses
+  a ledger from any other instance outright — checked against the entries a
+  verified chain actually contains, not the unauthenticated header line. A
+  citizen's cross-publisher query can never silently blend a simulation with
+  the real world.
+- **Divergence is an alarm, not an update.** A publisher who rewrites history
+  necessarily submits something disagreeing with what the registry already
+  holds. The earlier copy is kept, the attempt is counted, and it is
+  published — into `own_ledger()`, naming the publisher, at the moment it is
+  detected.
+- **The watchdog is watched.** `Registry::can_author_into_sources()` returns
+  `false`: nothing here can put words in a publisher's mouth. But a registry
+  that only watches others is unaccountable, which is the shape CUR-X.4 §4.3
+  refuses for anyone else — so the registry keeps its own append-only ledger
+  of what it observed, and mirrors it on the same terms as everyone it
+  watches.
 
 ## 7. Building
 
@@ -282,9 +339,11 @@ The commitment scheme has the same caveat and one more: a party holding the key
 can test a guess at any identity. That is inherent to keyed commitments and is
 why the key is held under access control rather than published.
 
-Not yet built: streaming append to disk, multi-publisher federation, a signature
-layer binding a ledger to a publisher key, and anchoring helpers (see 2).
+Multi-publisher aggregation is built — `otp::Registry`, §6.1. What remains: an
+instance-identifier registration scheme (design record §6.2, currently a bare
+string agreed out of band), streaming append to disk, a signature layer binding
+a ledger to a publisher key, and anchoring helpers (see §2).
 
 ---
 
-*Released under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/) — free to use, share, and build upon.*
+*Released under [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0), matching OTF-1 and OTB-1.*

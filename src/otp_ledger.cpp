@@ -131,10 +131,12 @@ uint64_t Ledger::commitment_for(const std::string& subject_id,
     return h;
 }
 
-void Ledger::set_instance(const std::string& instance,
-                         const std::string& schema_version) {
+bool Ledger::set_instance(const std::string& instance,
+                          const std::string& schema_version) {
+    if (!entries_.empty()) return false;
     instance_ = instance;
     schema_version_ = schema_version;
+    return true;
 }
 
 uint64_t Ledger::hash_entry(const Entry& e) const {
@@ -262,6 +264,21 @@ Integrity Ledger::verify() const {
             r.first_bad_seq = e.seq;
             r.first_bad_index = i;
             r.reason = "entry altered after publication";
+            return r;
+        }
+
+        // The header line is not itself hashed — see the note above Integrity
+        // in the header. Checking every entry against it here is what makes
+        // instance() trustworthy: a copy whose header alone was edited is
+        // caught, rather than silently reporting an instance none of its
+        // entries actually claim.
+        if (e.instance != instance_ || e.schema_version != schema_version_) {
+            r.intact = false;
+            r.first_bad_seq = e.seq;
+            r.first_bad_index = i;
+            r.reason = "entry instance/schema does not match this ledger's "
+                       "header — the header was edited independently of the "
+                       "entries it labels";
             return r;
         }
 

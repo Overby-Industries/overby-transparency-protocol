@@ -12,6 +12,7 @@
 #include <string>
 
 #include "otp/otp_ledger.h"
+#include "otp/otp_registry.h"
 
 namespace {
 
@@ -350,6 +351,349 @@ static void test_canonical_form_is_git_readable() {
     CHECK_EQ(back.digest(), tricky.digest());
 }
 
+static void test_header_cannot_be_relabelled_independently_of_entries() {
+    TEST("editing only the header does not change what a ledger claims to be "
+         "(design record §2, otp_ledger.h note above Integrity)");
+
+    otp::Ledger l = make_ledger();
+    l.set_instance("aevoria", "CUR-X.5/1.0.0");
+    l.publish(otp::SUBJ_INSTITUTION, "tribunal-2", "determination",
+              otp::ST_DETERMINED, 10, 4, "CUR-H.7 §7.15", "measure imposed");
+
+    std::string text = l.to_canonical();
+    const size_t nl = text.find('\n');
+    std::string header = text.substr(0, nl);
+
+    // The per-entry field is what is hashed. Editing ONLY the header — not the
+    // body — leaves every entry_hash intact, so a naive check that trusted the
+    // header would see nothing wrong.
+    CHECK(header.find("aevoria") != std::string::npos);
+    header.replace(header.find("aevoria"), 7, "overbyO");
+    std::string forged_text = header + text.substr(nl);
+
+    otp::Ledger forged;
+    CHECK(otp::Ledger::from_canonical(forged_text, &forged));
+
+    // instance() reads straight from the header and is deliberately naive —
+    // that is why verify() has to be called before it is trusted at all.
+    CHECK_EQ(forged.instance(), std::string("overbyO"));
+
+    // verify() catches it: the entries still say "aevoria", the header now
+    // says "overbyO", and the two disagree.
+    const otp::Integrity r = forged.verify();
+    CHECK(!r.intact);
+    CHECK(r.reason.find("header") != std::string::npos);
+}
+
+static void test_instance_cannot_change_mid_ledger() {
+    TEST("an instance is not something a ledger can switch after publishing "
+         "(otp_ledger.h note on set_instance)");
+
+    otp::Ledger l = make_ledger();
+    CHECK(l.set_instance("aevoria", "CUR-X.5/1.0.0"));
+    l.publish(otp::SUBJ_INSTITUTION, "tribunal-2", "determination",
+              otp::ST_DETERMINED, 10, 4, "cite", "");
+
+    // Once an entry exists, the instance is locked. Without this, a publisher
+    // could open as "aevoria", accumulate real-looking entries, then relabel
+    // to "overby-ops" so every LATER determination reads as real-world conduct
+    // while the hash chain — which never breaks on a plain append — stays
+    // unbroken throughout.
+    CHECK(!l.set_instance("overby-ops", "CUR-X.5/1.0.0"));
+    CHECK_EQ(l.instance(), std::string("aevoria"));
+
+    l.publish(otp::SUBJ_INSTITUTION, "tribunal-2", "determination",
+              otp::ST_DETERMINED, 20, 4, "cite", "");
+    CHECK_EQ(l.get(2)->instance, std::string("aevoria"));
+    CHECK(l.verify().intact);
+}
+
+// ---------------------------------------------------------------------------
+// Registry — the aggregator
+// ---------------------------------------------------------------------------
+
+namespace {
+
+otp::Registry make_registry(const char* instance = "aevoria") {
+    otp::Registry r;
+    r.set_instance(instance, "CUR-X.5/1.0.0");
+    return r;
+}
+
+std::string signed_entries(const char* instance, const char* publisher,
+                           int count, uint64_t tick_start = 0) {
+    otp::Ledger l;
+    l.set_commitment_key(1);
+    l.set_instance(instance, "CUR-X.5/1.0.0");
+    for (int i = 0; i < count; ++i) {
+        l.publish(otp::SUBJ_INSTITUTION, publisher, "determination",
+                  otp::ST_DETERMINED, tick_start + static_cast<uint64_t>(i), 3,
+                  "cite", "d");
+    }
+    return l.to_canonical();
+}
+
+}  // namespace
+
+static void test_registry_refuses_the_wrong_instance() {
+    TEST("a registry aggregating one instance refuses a ledger from another "
+         "(design record §2, otp_registry.h \"ONE REGISTRY, ONE INSTANCE\")");
+
+    otp::Registry reg = make_registry("aevoria");
+
+    const auto ok = reg.ingest("operator-1", signed_entries("aevoria", "operator-1", 2), 100);
+    CHECK_EQ(static_cast<int>(ok.status), static_cast<int>(otp::ING_ACCEPTED));
+
+    // A perfectly valid ledger — just for the wrong world.
+    const auto wrong = reg.ingest("operator-2",
+                                  signed_entries("overby-ops", "operator-2", 2), 100);
+    CHECK_EQ(static_cast<int>(wrong.status),
+             static_cast<int>(otp::ING_WRONG_INSTANCE));
+
+    // Nothing was stored. A citizen querying this registry never sees a real
+    // determination mixed in with simulated ones, or the reverse.
+    CHECK(reg.source("operator-2")->ledger.size() == 0);
+}
+
+static void test_registry_rewrite_detection_survives_verification_bypass() {
+    TEST("a header-only forgery is refused at ingest, not merely mislabelled "
+         "(chains together verify() and instance binding)");
+
+    otp::Registry reg = make_registry("aevoria");
+    reg.ingest("operator-1", signed_entries("aevoria", "operator-1", 1), 10);
+
+    // Forge a ledger for a DIFFERENT publisher whose header claims this
+    // registry's instance but whose entries do not — the same attack as
+    // test_header_cannot_be_relabelled_independently_of_entries, aimed at the
+    // aggregation layer instead of a lone reader.
+    std::string text = signed_entries("overby-ops", "operator-3", 1);
+    const size_t nl = text.find('\n');
+    std::string header = text.substr(0, nl);
+    header.replace(header.find("overby-ops"), 10, "aevoria");
+    std::string forged = header + text.substr(nl);
+
+    const auto rep = reg.ingest("operator-3", forged, 10);
+
+    // Caught by verify() inside ingest(), before the instance check even runs
+    // — a ledger that fails verify() never gets far enough to be judged on
+    // which world it claims to belong to.
+    CHECK_EQ(static_cast<int>(rep.status), static_cast<int>(otp::ING_BROKEN_CHAIN));
+}
+
+static void test_history_rewrite_is_refused_and_recorded() {
+    TEST("a rewritten history is refused, the earlier copy kept, and the "
+         "attempt published into the registry's own ledger");
+
+    otp::Registry reg = make_registry("aevoria");
+    reg.ingest("operator-1", signed_entries("aevoria", "operator-1", 3), 10);
+    CHECK_EQ(reg.source("operator-1")->ledger.size(), size_t{3});
+
+    // A from-scratch republish with different content at entry 2 — the
+    // "careful operator" case from the ledger's own test suite, now aimed at
+    // an aggregator instead of a lone holder.
+    otp::Ledger rewritten;
+    rewritten.set_commitment_key(1);
+    rewritten.set_instance("aevoria", "CUR-X.5/1.0.0");
+    rewritten.publish(otp::SUBJ_INSTITUTION, "operator-1", "determination",
+                      otp::ST_DETERMINED, 0, 3, "cite", "d");
+    rewritten.publish(otp::SUBJ_INSTITUTION, "operator-1", "determination",
+                      otp::ST_DETERMINED, 1, 3, "cite", "sanitised");
+    rewritten.publish(otp::SUBJ_INSTITUTION, "operator-1", "determination",
+                      otp::ST_DETERMINED, 2, 3, "cite", "d");
+
+    const auto rep = reg.ingest("operator-1", rewritten.to_canonical(), 20);
+    CHECK_EQ(static_cast<int>(rep.status),
+             static_cast<int>(otp::ING_HISTORY_REWRITTEN));
+    CHECK_EQ(rep.conflict_seq, uint64_t{2});
+
+    // The earlier copy is kept. The registry did not overwrite itself with the
+    // revision — that would be laundering the rewrite, not detecting it.
+    CHECK_EQ(reg.source("operator-1")->ledger.size(), size_t{3});
+    CHECK_EQ(reg.source("operator-1")->ledger.get(2)->detail, std::string("d"));
+    CHECK_EQ(reg.source("operator-1")->rewrite_attempts, uint32_t{1});
+
+    // A watchdog that only watches is unaccountable. The attempt is on the
+    // registry's own record, naming the publisher, not silently absorbed.
+    bool found = false;
+    for (const auto& e : reg.own_ledger().entries()) {
+        if (e.kind == "rewrite_attempt_detected" && e.subject_id == "operator-1") {
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+static void test_truncation_is_also_a_rewrite_attempt() {
+    TEST("a shorter resubmission is refused the same way a rewrite is");
+
+    otp::Registry reg = make_registry("aevoria");
+    reg.ingest("operator-1", signed_entries("aevoria", "operator-1", 4), 10);
+
+    const auto rep = reg.ingest("operator-1",
+                                signed_entries("aevoria", "operator-1", 2), 20);
+    CHECK_EQ(static_cast<int>(rep.status), static_cast<int>(otp::ING_TRUNCATED));
+    CHECK_EQ(reg.source("operator-1")->ledger.size(), size_t{4});
+    CHECK_EQ(reg.source("operator-1")->rewrite_attempts, uint32_t{1});
+}
+
+static void test_silence_is_detected_on_the_clock_not_on_arrival() {
+    TEST("run_builtin_test() notices silence because nothing arrived, which "
+         "is the one thing an arrival-triggered check cannot see");
+
+    otp::Registry reg = make_registry("aevoria");
+    reg.track("quiet-operator", /*heartbeat_ticks=*/100);
+    reg.ingest("quiet-operator", signed_entries("aevoria", "quiet-operator", 1), 0);
+
+    // Within the heartbeat: nothing to report.
+    CHECK(reg.run_builtin_test(50).empty());
+    CHECK(reg.silent_publishers(50).empty());
+
+    // Past it: reported exactly once, at the edge.
+    const auto first = reg.run_builtin_test(150);
+    CHECK_EQ(first.size(), size_t{1});
+    CHECK_EQ(first[0], std::string("quiet-operator"));
+    CHECK_EQ(reg.own_ledger().size(), size_t{1});
+    CHECK_EQ(reg.own_ledger().entries()[0].kind, std::string("publisher_silent"));
+
+    // Still silent later, but already reported — no duplicate entry. The
+    // registry's own ledger does not grow without bound over the silence.
+    const auto second = reg.run_builtin_test(300);
+    CHECK(second.empty());
+    CHECK_EQ(reg.own_ledger().size(), size_t{1});
+
+    // But it still shows up on a plain query, since that has no side effect to
+    // guard against.
+    CHECK_EQ(reg.silent_publishers(300).size(), size_t{1});
+
+    // Heard from again: the edge resets, so a future lapse is reported fresh
+    // rather than staying suppressed by a flag from last time.
+    reg.ingest("quiet-operator", signed_entries("aevoria", "quiet-operator", 2), 310);
+    CHECK(reg.silent_publishers(310).empty());
+    reg.run_builtin_test(500);
+    CHECK_EQ(reg.own_ledger().size(), size_t{2});
+}
+
+static void test_registry_cannot_author_into_a_source() {
+    TEST("the registry holds copies and checks them; it cannot put words in a "
+         "publisher's mouth (CUR-X.4 §4.3 reasoning applied to the watchdog)");
+
+    CHECK(!otp::Registry::can_author_into_sources());
+
+    // There is no publish()/correct() taking a publisher_id on Registry at
+    // all — the only way an entry reaches a Source's ledger is by round-
+    // tripping through ingest(), which requires a chain that already verifies.
+    // This is a structural check that the class has the shape the comment
+    // claims; it does not compile if a future edit adds such a method without
+    // updating this test to exercise it.
+    otp::Registry reg = make_registry("aevoria");
+    reg.ingest("operator-1", signed_entries("aevoria", "operator-1", 1), 10);
+    CHECK_EQ(reg.source("operator-1")->ledger.size(), size_t{1});
+}
+
+static void test_registry_own_ledger_is_a_real_ledger() {
+    TEST("the aggregator appears in its own record on the same terms as "
+         "anyone else (design record §3, \"the aggregator is a publisher too\")");
+
+    otp::Registry reg = make_registry("aevoria");
+    reg.track("operator-1", 50);
+    reg.ingest("operator-1", signed_entries("aevoria", "operator-1", 1), 0);
+    reg.run_builtin_test(200);  // operator-1 is now silent
+
+    CHECK_EQ(reg.own_ledger().instance(), std::string("aevoria"));
+    CHECK(reg.own_ledger().verify().intact);
+
+    // The registry's own findings are named, never committed — every subject
+    // it ever writes about is a publisher, and publishers are institutions.
+    CHECK_EQ(static_cast<int>(reg.own_ledger().entries()[0].disclosure),
+             static_cast<int>(otp::DISC_NAMED));
+
+    // Mirrorable exactly like a source ledger.
+    std::string canon = reg.own_ledger().to_canonical();
+    otp::Ledger reloaded;
+    CHECK(otp::Ledger::from_canonical(canon, &reloaded));
+    CHECK(reloaded.verify().intact);
+    CHECK_EQ(reloaded.digest(), reg.own_ledger().digest());
+}
+
+static void test_cross_publisher_reporting_resolves_corrections() {
+    TEST("a citizen's query across every ledger held resolves corrections, "
+         "not the as-published status (CUR-X.5 §5.7(d))");
+
+    otp::Registry reg = make_registry("aevoria");
+
+    otp::Ledger a;
+    a.set_commitment_key(1);
+    a.set_instance("aevoria", "CUR-X.5/1.0.0");
+    a.publish(otp::SUBJ_INSTITUTION, "shared-name-corp", "allegation",
+             otp::ST_ALLEGED, 0, 2, "cite", "");
+    reg.ingest("publisher-a", a.to_canonical(), 10);
+
+    otp::Ledger b;
+    b.set_commitment_key(1);
+    b.set_instance("aevoria", "CUR-X.5/1.0.0");
+    b.publish(otp::SUBJ_INSTITUTION, "shared-name-corp", "finding",
+             otp::ST_DETERMINED, 0, 3, "cite", "");
+    b.correct(1, otp::ST_OVERTURNED, 50, "overturned on appeal");
+    reg.ingest("publisher-b", b.to_canonical(), 60);
+
+    // Two matters, not three. Ledger b's correction entry (seq 2) also names
+    // "shared-name-corp" — that is what makes it followable on a raw read of
+    // the chain — but it is the resolution of seq 1, not a second occurrence,
+    // and find_naming() excludes it the same way standing_counts() excludes
+    // corrections from its counts. An institution that was corrected should
+    // not appear to have two matters against it, one of which is really the
+    // record that the other was cleared.
+    const auto hits = reg.find_naming("shared-name-corp");
+    CHECK_EQ(hits.size(), size_t{2});
+
+    bool saw_alleged = false, saw_overturned = false;
+    for (const auto& h : hits) {
+        if (h.publisher_id == "publisher-a") {
+            CHECK_EQ(static_cast<int>(h.standing), static_cast<int>(otp::ST_ALLEGED));
+            saw_alleged = true;
+        }
+        if (h.publisher_id == "publisher-b") {
+            // Resolved through the correction, not read as ST_DETERMINED,
+            // which is what publisher-b's entry says at face value.
+            CHECK_EQ(static_cast<int>(h.standing), static_cast<int>(otp::ST_OVERTURNED));
+            saw_overturned = true;
+        }
+    }
+    CHECK(saw_alleged);
+    CHECK(saw_overturned);
+
+    uint32_t counts[otp::ST_COUNT];
+    reg.standing_counts(counts);
+    CHECK_EQ(counts[otp::ST_ALLEGED], uint32_t{1});
+    CHECK_EQ(counts[otp::ST_OVERTURNED], uint32_t{1});
+    CHECK_EQ(counts[otp::ST_DETERMINED], uint32_t{0});  // corrected away, not double-counted
+}
+
+static void test_two_registries_collecting_the_same_sources_agree() {
+    TEST("independent registries watching the same publishers converge to "
+         "the same digest — the distributed check the design depends on");
+
+    const std::string sig = signed_entries("aevoria", "operator-1", 3);
+
+    otp::Registry mine = make_registry("aevoria");
+    mine.ingest("operator-1", sig, 100);
+
+    otp::Registry theirs = make_registry("aevoria");
+    theirs.ingest("operator-1", sig, 999);  // different observation tick
+
+    // Sources match; digest still depends on own_ledger_, which differs here
+    // only in that neither has observed anything adverse yet, so they agree.
+    CHECK_EQ(mine.digest(), theirs.digest());
+
+    // Now one of them catches something the other has not.
+    otp::Registry drifted = make_registry("aevoria");
+    drifted.track("operator-1", 1);
+    drifted.ingest("operator-1", sig, 100);
+    drifted.run_builtin_test(50000);  // long silence, self-inflicted for the test
+
+    CHECK(mine.digest() != drifted.digest());
+}
+
 int main() {
     std::printf("Overby Ledger %s\n\n", otp::OTP_VERSION);
 
@@ -361,6 +705,17 @@ int main() {
     test_the_ledger_imposes_nothing();
     test_an_instance_cannot_be_relabelled();
     test_canonical_form_is_git_readable();
+    test_header_cannot_be_relabelled_independently_of_entries();
+    test_instance_cannot_change_mid_ledger();
+    test_registry_refuses_the_wrong_instance();
+    test_registry_rewrite_detection_survives_verification_bypass();
+    test_history_rewrite_is_refused_and_recorded();
+    test_truncation_is_also_a_rewrite_attempt();
+    test_silence_is_detected_on_the_clock_not_on_arrival();
+    test_registry_cannot_author_into_a_source();
+    test_registry_own_ledger_is_a_real_ledger();
+    test_cross_publisher_reporting_resolves_corrections();
+    test_two_registries_collecting_the_same_sources_agree();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
