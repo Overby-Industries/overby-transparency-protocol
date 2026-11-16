@@ -1,5 +1,12 @@
 # transparency-protocol
 
+[![Version](https://img.shields.io/badge/Version-1.0.0-blue?style=for-the-badge&logo=github)](https://github.com/Overby-Industries/overby-transparency-protocol/releases)
+[![License](https://img.shields.io/badge/License-Apache_2.0-lightgrey?style=for-the-badge&logo=apache)](LICENSE)
+[![Language](https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)](CMakeLists.txt)
+[![Dependencies](https://img.shields.io/badge/Dependencies-None-green?style=for-the-badge)](CMakeLists.txt)
+[![Tests](https://img.shields.io/badge/Tests-Adversarial-purple?style=for-the-badge)](tests/otp_tests.cpp)
+[![Status](https://img.shields.io/badge/Status-Draft-orange?style=for-the-badge)](#status)
+
 *A free, append-only, tamper-evident public record — for Overby's own conduct,
 and for anyone else who publishes into it.*
 
