@@ -1,6 +1,7 @@
 # transparency-protocol
 
 [![Version](https://img.shields.io/badge/Version-1.0.0-blue?style=for-the-badge&logo=github)](https://github.com/Overby-Industries/overby-transparency-protocol/releases)
+[![Build & Test](https://img.shields.io/github/actions/workflow/status/Overby-Industries/overby-transparency-protocol/build.yml?branch=main&style=for-the-badge&label=Build%20%26%20Test&logo=githubactions&logoColor=white)](https://github.com/Overby-Industries/overby-transparency-protocol/actions/workflows/build.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-lightgrey?style=for-the-badge&logo=apache)](LICENSE)
 [![Language](https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)](CMakeLists.txt)
 [![Dependencies](https://img.shields.io/badge/Dependencies-None-green?style=for-the-badge)](CMakeLists.txt)
