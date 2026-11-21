@@ -1,0 +1,6 @@
+[submodule "bridge/deps/telemetry-protocol"]
+	path = bridge/deps/telemetry-protocol
+	url = https://github.com/Overby-Industries/telemetry-protocol.git
+[submodule "bridge/deps/transparency-protocol"]
+	path = bridge/deps/transparency-protocol
+	url = https://github.com/Overby-Industries/transparency-protocol.git

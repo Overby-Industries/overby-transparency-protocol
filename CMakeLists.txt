@@ -32,6 +32,14 @@ if(MSVC)
 endif()
 add_test(NAME otp_tests COMMAND otp_tests)
 
+# The bridge to OTF-1 and OTB-1 is optional: the core library above depends on
+# no other Overby repository, and turning this on is the only thing that needs
+# them. See bridge/CMakeLists.txt.
+option(OTP_BUILD_BRIDGE "Build the OTF-1/OTB-1 bridge (needs the git submodules)" OFF)
+if(OTP_BUILD_BRIDGE)
+    add_subdirectory(bridge)
+endif()
+
 add_executable(otp_token_tests tests/otp_token_tests.cpp)
 target_link_libraries(otp_token_tests PRIVATE otp)
 if(MSVC)
