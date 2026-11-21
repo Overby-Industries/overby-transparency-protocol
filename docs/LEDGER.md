@@ -42,7 +42,12 @@ altered.* An entry hash provides exactly that, at zero cost:
 The field stays and the schema does not change. What changes is that the value is
 a ledger coordinate — protocol, sequence, entry hash — rather than a chain token,
 so issuing one costs nothing and verifying one needs no wallet, no node, and no
-gas. §2 covers what this does and does not buy against a chain, including the one
+gas. The coordinate is implemented in `otp_token.h`.
+
+A coordinate alone proves an entry exists and is unaltered. It does not prove the
+entry is about the packet carrying it. [`docs/BRIDGE.md`](BRIDGE.md) describes the
+optional bridge, which makes each entry commit to the packet it records and so
+closes that gap. §2 covers what this does and does not buy against a chain, including the one
 property a chain genuinely provides, and how to get it for approximately nothing.
 
 ---
@@ -193,7 +198,8 @@ shape. Separation is not packaging convenience; it is the same principle applied
 to the tooling.
 
 Practically, it also means one implementation serves every publisher. This
-library has **no dependency on any other Overby repository**, takes no view on
+library has **no dependency on any other Overby repository** (the optional
+bridge in `bridge/` is a separate target and the only thing that needs them), takes no view on
 governance, and knows nothing about the CUR corpus — `kind` and `citation` are
 free-form strings so the protocol never has to learn the vocabulary of the
 things it publishes.
