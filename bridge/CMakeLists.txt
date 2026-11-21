@@ -6,21 +6,31 @@
 #     cmake -S . -B build -DOTP_BUILD_BRIDGE=ON
 #
 # They are taken as submodules under bridge/deps so the exact versions of the
-# two formats the bridge was built and tested against are part of this repo.
+# two formats the bridge was built and tested against are part of this repo,
+# unless the parent project supplies either one itself.
 
-foreach(dep telemetry-protocol transparency-protocol)
+# The bridge needs libotf1 and libotb1. A project that already provides them
+# (because it uses one of them directly, as Starlifter OS uses libotf1) passes
+# nothing and gets its own: the targets are only added here when they do not
+# already exist, so two copies of one library never collide.
+function(otp_bridge_need target dep subdirectory)
+    if(TARGET ${target})
+        return()
+    endif()
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/${dep}/CMakeLists.txt")
         message(FATAL_ERROR
-            "The ${dep} submodule is missing. Fetch it with:\n"
+            "The bridge needs ${target}, and the ${dep} submodule is missing. Fetch it with:\n"
             "    git submodule update --init\n"
-            "The bridge needs it; the ledger's core library does not.")
+            "or provide ${target} from the parent project before adding this one.\n"
+            "The ledger's core library does not need it.")
     endif()
-endforeach()
+    # Each brings its own library. Their tests and tools are not built when
+    # they are not the top-level project.
+    add_subdirectory(deps/${dep} ${CMAKE_BINARY_DIR}/bridge-deps/${subdirectory})
+endfunction()
 
-# Each brings its own library (otf1::otf1, otb1::otb1). Their tests and tools
-# are not built when they are not the top-level project.
-add_subdirectory(deps/telemetry-protocol ${CMAKE_BINARY_DIR}/bridge-deps/otf1)
-add_subdirectory(deps/transparency-protocol ${CMAKE_BINARY_DIR}/bridge-deps/otb1)
+otp_bridge_need(otf1::otf1 telemetry-protocol otf1)
+otp_bridge_need(otb1::otb1 transparency-protocol otb1)
 
 add_library(otp_bridge STATIC
     src/otp_bridge.cpp
