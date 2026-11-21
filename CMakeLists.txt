@@ -24,13 +24,34 @@ else()
     target_compile_options(otp PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-enable_testing()
-add_executable(otp_tests tests/otp_tests.cpp)
-target_link_libraries(otp_tests PRIVATE otp)
-if(MSVC)
-    target_compile_options(otp_tests PRIVATE /utf-8)
+# Test suites are built when this is the top-level project, and not when
+# another project includes it with add_subdirectory(): a parent that wants the
+# ledger as a library does not want its tests built into, and registered with,
+# its own ctest run. Set OTP_BUILD_TESTS=ON to build them anyway.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(OTP_IS_TOP_LEVEL ON)
+else()
+    set(OTP_IS_TOP_LEVEL OFF)
 endif()
-add_test(NAME otp_tests COMMAND otp_tests)
+option(OTP_BUILD_TESTS "Build the ledger's test suites" ${OTP_IS_TOP_LEVEL})
+
+if(OTP_BUILD_TESTS)
+    enable_testing()
+
+    add_executable(otp_tests tests/otp_tests.cpp)
+    target_link_libraries(otp_tests PRIVATE otp)
+    if(MSVC)
+        target_compile_options(otp_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME otp_tests COMMAND otp_tests)
+
+    add_executable(otp_token_tests tests/otp_token_tests.cpp)
+    target_link_libraries(otp_token_tests PRIVATE otp)
+    if(MSVC)
+        target_compile_options(otp_token_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME otp_token_tests COMMAND otp_token_tests)
+endif()
 
 # The bridge to OTF-1 and OTB-1 is optional: the core library above depends on
 # no other Overby repository, and turning this on is the only thing that needs
@@ -39,10 +60,3 @@ option(OTP_BUILD_BRIDGE "Build the OTF-1/OTB-1 bridge (needs the git submodules)
 if(OTP_BUILD_BRIDGE)
     add_subdirectory(bridge)
 endif()
-
-add_executable(otp_token_tests tests/otp_token_tests.cpp)
-target_link_libraries(otp_token_tests PRIVATE otp)
-if(MSVC)
-    target_compile_options(otp_token_tests PRIVATE /utf-8)
-endif()
-add_test(NAME otp_token_tests COMMAND otp_token_tests)

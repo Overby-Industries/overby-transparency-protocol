@@ -50,13 +50,15 @@ else()
     target_compile_options(otp_bridge PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
 endif()
 
-add_executable(otp_bridge_tests tests/bridge_tests.cpp)
-target_link_libraries(otp_bridge_tests PRIVATE otp_bridge)
-target_include_directories(otp_bridge_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-# The golden vectors and the example packets the tests read.
-target_compile_definitions(otp_bridge_tests PRIVATE
-    OTP_BRIDGE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-if(MSVC)
-    target_compile_options(otp_bridge_tests PRIVATE /utf-8)
+if(OTP_BUILD_TESTS)
+    add_executable(otp_bridge_tests tests/bridge_tests.cpp)
+    target_link_libraries(otp_bridge_tests PRIVATE otp_bridge)
+    target_include_directories(otp_bridge_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # The golden vectors and the example packets the tests read.
+    target_compile_definitions(otp_bridge_tests PRIVATE
+        OTP_BRIDGE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC)
+        target_compile_options(otp_bridge_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME otp_bridge_tests COMMAND otp_bridge_tests)
 endif()
-add_test(NAME otp_bridge_tests COMMAND otp_bridge_tests)
