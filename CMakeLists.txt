@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(otp STATIC
     src/otp_ledger.cpp
     src/otp_registry.cpp
+    src/otp_token.cpp
 )
 
 add_library(otp::otp ALIAS otp)
@@ -30,3 +31,10 @@ if(MSVC)
     target_compile_options(otp_tests PRIVATE /utf-8)
 endif()
 add_test(NAME otp_tests COMMAND otp_tests)
+
+add_executable(otp_token_tests tests/otp_token_tests.cpp)
+target_link_libraries(otp_token_tests PRIVATE otp)
+if(MSVC)
+    target_compile_options(otp_token_tests PRIVATE /utf-8)
+endif()
+add_test(NAME otp_token_tests COMMAND otp_token_tests)
