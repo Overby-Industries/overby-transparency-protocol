@@ -149,8 +149,13 @@ static void test_canonical_form_matches_independent_code() {
     while (start < golden.size()) {
         size_t end = golden.find('\n', start);
         if (end == std::string::npos) end = golden.size();
-        const std::string line = golden.substr(start, end - start);
+        std::string line = golden.substr(start, end - start);
         start = end + 1;
+        // .gitattributes pins this file to LF, but a copy that went through
+        // another tool may not have kept it. A canonical form never contains a
+        // raw carriage return (it is escaped), so one at the end is not part
+        // of the vector.
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
 
         std::vector<std::string> f;
