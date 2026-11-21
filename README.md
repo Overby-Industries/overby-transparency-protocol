@@ -24,7 +24,9 @@ and for anyone else who publishes into it.*
 |---|---|
 | [`docs/LEDGER.md`](docs/LEDGER.md) | **Start here.** What this is, why it isn't a blockchain, the disclosure asymmetry that protects the vulnerable, and how to use it — including the aggregator, `otp::Registry` |
 | [`docs/DESIGN.md`](docs/DESIGN.md) | The design record: four decisions taken, what each one forces, and what remains open. Read this to understand *why* the code looks the way it does, not just what it does |
-| [`include/otp/`](include/otp/) | `otp_ledger.h` — one publisher's chain. `otp_registry.h` — the aggregator that collects across many |
+| [`docs/BRIDGE.md`](docs/BRIDGE.md) | The optional bridge from OTF-1 and OTB-1: publish an event or a spending record, stamp it with a coordinate, and let anyone check the stamp is about that record |
+| [`include/otp/`](include/otp/) | `otp_ledger.h` — one publisher's chain. `otp_registry.h` — the aggregator that collects across many. `otp_token.h` — the `otp:1:<seq>:<hash>` coordinate |
+| [`bridge/`](bridge/) | The bridge itself. Optional, off by default; needs the two protocol repositories as submodules |
 | [`tests/otp_tests.cpp`](tests/otp_tests.cpp) | Adversarial by design. Every claim this protocol makes has a test that tries to break it |
 
 ## In one paragraph
@@ -82,6 +84,13 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+The bridge to OTF-1 and OTB-1 is optional, and the core library above does not need it:
+
+```
+git submodule update --init
+cmake -S . -B build -DOTP_BUILD_BRIDGE=ON
+```
+
 Or without CMake: `cl /std:c++17 /EHsc /W4 /permissive- /utf-8 /Iinclude tests\otp_tests.cpp src\*.cpp`
 
 Inside SCons, `SConscript` returns the source node list — see `docs/LEDGER.md` §7.
@@ -89,7 +98,8 @@ Inside SCons, `SConscript` returns the source node list — see `docs/LEDGER.md`
 ## Status
 
 Draft. The hash is FNV-1a/64: fine against accident and casual tampering, not
-against a determined adversary. `docs/LEDGER.md` §8 states exactly what that
+against a determined adversary. (The bridge's packet digest is SHA-256; the
+entry hash a coordinate carries is still this one.) `docs/LEDGER.md` §8 states exactly what that
 means and what a publisher with real adversaries should swap in. Overstating a
 transparency tool's guarantees is worse than having none.
 

@@ -28,3 +28,49 @@ jobs:
       # those claims no longer holds.
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+  # The bridge to OTF-1 and OTB-1 is optional and needs the two protocol
+  # repositories as submodules, so it has its own job. The core library above
+  # is built and tested without them.
+  bridge:
+    name: Bridge build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOTP_BUILD_BRIDGE=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  # The bridge's canonical form is reproduced in independent code
+  # (bridge/tools/golden.py) and the C++ tests are held to the bytes it
+  # writes. This checks the committed golden file still matches the examples
+  # in the pinned submodules.
+  golden:
+    name: Golden vectors are in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install jsonschema
+        run: pip install jsonschema
+
+      - name: Check the golden file
+        run: python bridge/tools/golden.py --check
