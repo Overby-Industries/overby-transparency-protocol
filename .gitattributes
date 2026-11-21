@@ -1,0 +1,4 @@
+# The bridge's golden vectors are compared byte for byte against what the C++
+# produces. A checkout that rewrites their line endings (core.autocrlf on
+# Windows does) would add a stray carriage return to every vector.
+bridge/tests/golden.txt text eol=lf
